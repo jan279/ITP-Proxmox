@@ -6,7 +6,7 @@ set -euo pipefail
 ########################################
 DOKU_USER="doku"
 DOKU_PASS="doku"   # <- fest definieren
-OUT_BASE="/root/doku_exports"           # wohin der Export geschrieben wird
+OUT_BASE="/var/tmp/doku_exports"           # wohin der Export geschrieben wird
 NO_REDACT=0                             # 0 = Secrets redacted (empfohlen), 1 = keine Redaction
 DELETE_AFTER_MIN=30
 ########################################
