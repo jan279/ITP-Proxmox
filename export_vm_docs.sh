@@ -217,6 +217,30 @@ else
   write ""
 fi
 
+# Weitere Service-Runtimes / Manager erfassen
+h2 "Weitere Service-Manager / Container-Runtimes"
+cmd_block_if "Supervisord (supervisorctl status)" supervisorctl status
+cmd_block_if "Podman containers" podman ps -a
+cmd_block_if "Docker containers" docker ps -a
+cmd_block_if "containerd (crictl)" crictl ps
+
+# LXC / LXD
+if have lxc; then
+  cmd_block "LXC/LXD: lxc list (falls LXD)" lxc list --format=csv || true
+elif command -v lxc-ls >/dev/null 2>&1; then
+  cmd_block "LXC: lxc-ls -f" lxc-ls -f
+fi
+
+# Snap services (falls vorhanden)
+cmd_block_if "snap services" snap services
+
+# SysV / init.d Auflistung
+cmd_block "SysV init scripts" ls -la /etc/init.d || true
+
+# Runit / s6 Hinweise
+cmd_block_if "Runit service dirs (/etc/service)" ls /etc/service || true
+cmd_block_if "S6 service dir (/run)" ls /run 2>/dev/null || true
+
 h2 "Firewall"
 cmd_block_if "UFW" ufw status verbose
 cmd_block_if "nftables (gekürzt)" sh -c 'nft list ruleset 2>/dev/null | sed -n "1,250p"'
@@ -262,8 +286,19 @@ else
   write ""
 fi
 
+# Podman fallback: capture podman-compose / containers if podman exists
+if have podman; then
+  h3 "Podman: installed containers"
+  {
+    printf '```
+'
+    podman ps -a || true
+    printf '
+
 h2 "Zusätzliche Includes"
 for f in "${INCLUDE_FILES[@]:-}"; do
+  } >> "$MD"
+fi
   [[ -n "$f" ]] && append_file "$f"
 done
 for d in "${INCLUDE_DIRS[@]:-}"; do
@@ -273,6 +308,11 @@ done
 h2 "Hinweise"
 write "- **Vor dem Einfügen in BookStack**: Markdown einmal kurz durchscrollen (Secrets/Keys prüfen)."
 write "- Wenn du mehr/andere Pfade willst: Script mit \`--include\` / \`--include-dir\` erneut laufen lassen."
+write ""
+
+# Performance / completeness notes (für Admins)
+write "- Hinweis: Dieses Script sammelt breite Systeminfos; bei sehr großen Systemen kann das Lesen vieler Logs langsam sein."
+write "- Tipp: Für schnellere Läufe: \`--include\` benutzen um nur relevante Dateien einzuschließen."
 write ""
 
 echo "OK: Markdown exportiert nach: $MD"
