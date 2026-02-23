@@ -160,6 +160,11 @@ need_cmd scp
 normalize_inputs
 mkdir -p "$LOCAL_OUT"
 
+# Lokalen Host-Ordner anlegen (besseres Layout lokal)
+host_sanitized="$(echo "$HOST" | tr . _ | tr -cd '[:alnum:]_')"
+LOCAL_HOST_DIR="$LOCAL_OUT/$host_sanitized"
+mkdir -p "$LOCAL_HOST_DIR"
+
 if [[ -z "$PASSWORD" ]]; then
   read -r -s -p "SSH password for ${SSH_USER}@${HOST}: " PASSWORD
   echo
@@ -425,19 +430,19 @@ if [[ -z "$artifact_dir" ]]; then
   exit 1
 fi
 
-echo "$REMOTE_OUTPUT" > "${LOCAL_OUT}/remote_session_${REMOTE_BASENAME}.log"
+echo "$REMOTE_OUTPUT" > "${LOCAL_HOST_DIR}/remote_session_${REMOTE_BASENAME}.log"
 
-echo "Downloading artifact directory: $artifact_dir"
+echo "Downloading artifact directory: $artifact_dir -> ${LOCAL_HOST_DIR}/"
 sshpass -e scp -r -P "$PORT" -o PreferredAuthentications=password -o PubkeyAuthentication=no \
   ${ACCEPT_NEW_HOSTKEY:+-o StrictHostKeyChecking=accept-new} \
-  "${SSH_USER}@${HOST}:${artifact_dir}" "${LOCAL_OUT}/" >/dev/null
+  "${SSH_USER}@${HOST}:${artifact_dir}" "${LOCAL_HOST_DIR}/" >/dev/null
 
 if [[ "$KEEP_ARTIFACT" != "1" ]]; then
   sshpass -e ssh "${SSH_OPTS[@]}" "${SSH_USER}@${HOST}" "rm -rf $(printf %q "$artifact_dir")" >/dev/null || true
 fi
 
 echo "Saved:"
-echo "  ${LOCAL_OUT}/${REMOTE_BASENAME}/"
+echo "  ${LOCAL_HOST_DIR}/${REMOTE_BASENAME}/"
 echo "Look:"
-echo "  ${LOCAL_OUT}/${REMOTE_BASENAME}/files/ (bookstack*.md)"
-echo "  ${LOCAL_OUT}/${REMOTE_BASENAME}/logs/  (logs)"
+echo "  ${LOCAL_HOST_DIR}/${REMOTE_BASENAME}/files/ (bookstack*.md)"
+echo "  ${LOCAL_HOST_DIR}/${REMOTE_BASENAME}/logs/  (logs)"
