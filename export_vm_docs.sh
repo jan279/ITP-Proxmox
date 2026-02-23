@@ -174,12 +174,72 @@ append_file() {
 append_dir_files() {
   local dir="$1"
   [[ -d "$dir" ]] || return 0
+  # Collect candidate files (limit to 200) and sanitize in batch for performance
+  local -a files
   while IFS= read -r f; do
-    append_file "$f"
+    files+=("$f")
   done < <(find "$dir" -type f \( \
             -name "*.yml" -o -name "*.yaml" -o -name "*.json" -o -name "*.toml" -o -name "*.ini" -o -name "*.conf" \
             -o -name "docker-compose.yml" -o -name "compose.yml" -o -name "Caddyfile" -o -name "*.service" \
           \) 2>/dev/null | head -n 200)
+
+  if [[ ${#files[@]} -eq 0 ]]; then
+    return 0
+  fi
+
+  # Batch-sanitize files with a single Python process if available
+  batch_sanitize() {
+    if have python3; then
+      python3 - "$OUTDIR/files" "${files[@]}" <<'PY'
+import sys, pathlib, re
+outdir = pathlib.Path(sys.argv[1])
+paths = sys.argv[2:]
+key_re = re.compile(r'(?i)\b(pass(word|wd)?|secret|token|api[_-]?key|client[_-]?secret|bearer|authorization|private[_-]?key)\b')
+
+def sanitize_text(text):
+    # simple redaction rules similar to the inline script
+    def redact_line(line):
+        m = re.match(r'^(\s*[^#\n\r]*?)([:=])(\s*)(.+)$', line)
+        if m:
+            left, sep, sp, right = m.group(1), m.group(2), m.group(3), m.group(4)
+            if key_re.search(left):
+                return f"{left}{sep}{sp}***REDACTED***\n"
+        if re.search(r'(?i)^\s*authorization\s*:\s*', line):
+            return re.sub(r'(:\s*).+', r'\1***REDACTED***', line.rstrip()) + "\n"
+        line2 = re.sub(r'(?i)Bearer\s+[A-Za-z0-9\-\._~\+\/]+=*', 'Bearer ***REDACTED***', line)
+        line2 = re.sub(r'([A-Za-z0-9_\-]{40,})', '***REDACTED_LONG_TOKEN***', line2)
+        return line2
+
+    out = []
+    for ln in text.splitlines(keepends=True):
+        out.append(redact_line(ln))
+    return ''.join(out)
+
+for p in paths:
+    src = pathlib.Path(p)
+    safe = src.as_posix().replace('/', '_')
+    dst = outdir / safe
+    try:
+        if src.exists() and src.is_file():
+            text = src.read_text(errors='replace')
+            dst.write_text(sanitize_text(text))
+        else:
+            dst.write_text('[MISSING]\n')
+    except Exception as e:
+        dst.write_text(f'[ERROR reading file: {e}]\n')
+PY
+      return 0
+    fi
+    return 1
+  }
+
+  mkdir -p "$OUTDIR/files"
+  batch_sanitize || true
+
+  # Append sanitized files to markdown
+  for f in "${files[@]}"; do
+    append_file "$f"
+  done
 }
 
 h1 "VM-Dokumentation: ${HOST}"
@@ -241,6 +301,29 @@ cmd_block "SysV init scripts" ls -la /etc/init.d || true
 cmd_block_if "Runit service dirs (/etc/service)" ls /etc/service || true
 cmd_block_if "S6 service dir (/run)" ls /run 2>/dev/null || true
 
+# Detailliertere runit/s6 Abfrage
+if command -v sv >/dev/null 2>&1; then
+  h3 "Runit: sv status (per service)"
+  for d in /etc/service/*; do
+    [[ -d "$d" ]] || continue
+    svc="$(basename "$d")"
+    {
+      printf 'Service: %s\n' "$svc"
+      sv status "$svc" 2>&1 || true
+      printf '\n'
+    } >> "$MD"
+  done
+fi
+
+if command -v s6-svscanctl >/dev/null 2>&1 || command -v s6 >/dev/null 2>&1; then
+  h3 "s6: basic status info"
+  {
+    printf 's6 services listing (ls /run):\n'
+    ls -la /run 2>/dev/null || true
+    printf '\n'
+  } >> "$MD"
+fi
+
 h2 "Firewall"
 cmd_block_if "UFW" ufw status verbose
 cmd_block_if "nftables (gekürzt)" sh -c 'nft list ruleset 2>/dev/null | sed -n "1,250p"'
@@ -294,11 +377,14 @@ if have podman; then
 '
     podman ps -a || true
     printf '
+```
+
+'
+  } >> "$MD"
+fi
 
 h2 "Zusätzliche Includes"
 for f in "${INCLUDE_FILES[@]:-}"; do
-  } >> "$MD"
-fi
   [[ -n "$f" ]] && append_file "$f"
 done
 for d in "${INCLUDE_DIRS[@]:-}"; do

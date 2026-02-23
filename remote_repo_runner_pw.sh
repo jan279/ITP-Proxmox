@@ -235,6 +235,9 @@ install_deps() {
   local need_python="$2"
   local pkgs=(git tar gzip ca-certificates findutils)
 
+  # rsync hilft beim schnellen Übertragen größerer Payloads
+  pkgs+=(rsync)
+
   if [[ "$need_python" == "1" ]]; then
     case "$pm" in
       pacman) pkgs+=(python) ;;
@@ -433,9 +436,25 @@ fi
 echo "$REMOTE_OUTPUT" > "${LOCAL_HOST_DIR}/remote_session_${REMOTE_BASENAME}.log"
 
 echo "Downloading artifact directory: $artifact_dir -> ${LOCAL_HOST_DIR}/"
-sshpass -e scp -r -P "$PORT" -o PreferredAuthentications=password -o PubkeyAuthentication=no \
-  ${ACCEPT_NEW_HOSTKEY:+-o StrictHostKeyChecking=accept-new} \
-  "${SSH_USER}@${HOST}:${artifact_dir}" "${LOCAL_HOST_DIR}/" >/dev/null
+
+# Prefer rsync if available locally; use scp fallback
+if command -v rsync >/dev/null 2>&1; then
+  RSYNC_RSH="sshpass -e ssh -p $PORT -o PreferredAuthentications=password -o PubkeyAuthentication=no -o BatchMode=no -o ServerAliveInterval=15 -o ServerAliveCountMax=3"
+  if [[ "$ACCEPT_NEW_HOSTKEY" == "1" ]]; then
+    RSYNC_RSH="$RSYNC_RSH -o StrictHostKeyChecking=accept-new"
+  fi
+
+  rsync -a -e "$RSYNC_RSH" "${SSH_USER}@${HOST}:${artifact_dir}/" "${LOCAL_HOST_DIR}/${REMOTE_BASENAME}/" >/dev/null 2>&1 || {
+    echo "Warning: rsync failed, falling back to scp" >&2
+    sshpass -e scp -r -P "$PORT" -o PreferredAuthentications=password -o PubkeyAuthentication=no \
+      ${ACCEPT_NEW_HOSTKEY:+-o StrictHostKeyChecking=accept-new} \
+      "${SSH_USER}@${HOST}:${artifact_dir}" "${LOCAL_HOST_DIR}/" >/dev/null
+  }
+else
+  sshpass -e scp -r -P "$PORT" -o PreferredAuthentications=password -o PubkeyAuthentication=no \
+    ${ACCEPT_NEW_HOSTKEY:+-o StrictHostKeyChecking=accept-new} \
+    "${SSH_USER}@${HOST}:${artifact_dir}" "${LOCAL_HOST_DIR}/" >/dev/null
+fi
 
 if [[ "$KEEP_ARTIFACT" != "1" ]]; then
   sshpass -e ssh "${SSH_OPTS[@]}" "${SSH_USER}@${HOST}" "rm -rf $(printf %q "$artifact_dir")" >/dev/null || true
