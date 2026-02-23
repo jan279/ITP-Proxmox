@@ -437,15 +437,19 @@ echo "$REMOTE_OUTPUT" > "${LOCAL_HOST_DIR}/remote_session_${REMOTE_BASENAME}.log
 
 echo "Downloading artifact directory: $artifact_dir -> ${LOCAL_HOST_DIR}/"
 
-# Prefer rsync if available locally; use scp fallback
+# Prefer rsync if available locally; use scp fallback. Capture rsync stderr for debugging.
 if command -v rsync >/dev/null 2>&1; then
-  RSYNC_RSH="sshpass -e ssh -p $PORT -o PreferredAuthentications=password -o PubkeyAuthentication=no -o BatchMode=no -o ServerAliveInterval=15 -o ServerAliveCountMax=3"
+  RSYNC_SSH_OPTS="-p $PORT -o PreferredAuthentications=password -o PubkeyAuthentication=no -o BatchMode=no -o ServerAliveInterval=15 -o ServerAliveCountMax=3"
   if [[ "$ACCEPT_NEW_HOSTKEY" == "1" ]]; then
-    RSYNC_RSH="$RSYNC_RSH -o StrictHostKeyChecking=accept-new"
+    RSYNC_SSH_OPTS="$RSYNC_SSH_OPTS -o StrictHostKeyChecking=accept-new"
   fi
 
-  rsync -a -e "$RSYNC_RSH" "${SSH_USER}@${HOST}:${artifact_dir}/" "${LOCAL_HOST_DIR}/${REMOTE_BASENAME}/" >/dev/null 2>&1 || {
+  RSYNC_LOG="${LOCAL_HOST_DIR}/rsync_$(date +%s).log"
+  # Run rsync prefixed with sshpass so ssh child gets the password
+  sshpass -e rsync -a -e "ssh $RSYNC_SSH_OPTS" "${SSH_USER}@${HOST}:${artifact_dir}/" "${LOCAL_HOST_DIR}/${REMOTE_BASENAME}/" >"${RSYNC_LOG}" 2>&1 || {
     echo "Warning: rsync failed, falling back to scp" >&2
+    echo "--- rsync stderr/stdout (first 200 lines) ---" >&2
+    head -n 200 "${RSYNC_LOG}" >&2 || true
     sshpass -e scp -r -P "$PORT" -o PreferredAuthentications=password -o PubkeyAuthentication=no \
       ${ACCEPT_NEW_HOSTKEY:+-o StrictHostKeyChecking=accept-new} \
       "${SSH_USER}@${HOST}:${artifact_dir}" "${LOCAL_HOST_DIR}/" >/dev/null
