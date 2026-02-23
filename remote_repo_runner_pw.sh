@@ -446,3 +446,21 @@ echo "  ${LOCAL_HOST_DIR}/${REMOTE_BASENAME}/"
 echo "Look:"
 echo "  ${LOCAL_HOST_DIR}/${REMOTE_BASENAME}/files/ (bookstack*.md)"
 echo "  ${LOCAL_HOST_DIR}/${REMOTE_BASENAME}/logs/  (logs)"
+
+# Entferne am Ende angehängte 6-stellige Zeitbestandteile von Ordnernamen (z.B. _134620)
+# Suche rekursiv im gerade heruntergeladenen Artefakt und benenne Verzeichnisse um.
+if [[ -d "${LOCAL_HOST_DIR}/${REMOTE_BASENAME}" ]]; then
+  find "${LOCAL_HOST_DIR}/${REMOTE_BASENAME}" -depth -type d -name '*_[0-9][0-9][0-9][0-9][0-9][0-9]' -print0 \
+    | while IFS= read -r -d '' dir; do
+        base="$(basename "$dir")"
+        newbase="${base%_[0-9][0-9][0-9][0-9][0-9][0-9]}"
+        if [[ "$newbase" != "$base" ]]; then
+          target="$(dirname "$dir")/$newbase"
+          if [[ -e "$target" ]]; then
+            echo "WARN: cannot rename $dir -> $target (target exists), skipping"
+          else
+            mv -T -- "$dir" "$target" && echo "Renamed: $dir -> $target"
+          fi
+        fi
+    done
+fi
