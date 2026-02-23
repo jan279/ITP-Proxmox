@@ -437,24 +437,21 @@ echo "$REMOTE_OUTPUT" > "${LOCAL_HOST_DIR}/remote_session_${REMOTE_BASENAME}.log
 
 echo "Downloading artifact directory: $artifact_dir -> ${LOCAL_HOST_DIR}/"
 
-# Prefer rsync if available locally; use scp fallback. Capture rsync stderr for debugging.
-if command -v rsync >/dev/null 2>&1; then
-  RSYNC_SSH_OPTS="-p $PORT -o PreferredAuthentications=password -o PubkeyAuthentication=no -o BatchMode=no -o ServerAliveInterval=15 -o ServerAliveCountMax=3"
-  if [[ "$ACCEPT_NEW_HOSTKEY" == "1" ]]; then
-    RSYNC_SSH_OPTS="$RSYNC_SSH_OPTS -o StrictHostKeyChecking=accept-new"
-  fi
-
-  RSYNC_LOG="${LOCAL_HOST_DIR}/rsync_$(date +%s).log"
-  # Run rsync prefixed with sshpass so ssh child gets the password
-  sshpass -e rsync -a -e "ssh $RSYNC_SSH_OPTS" "${SSH_USER}@${HOST}:${artifact_dir}/" "${LOCAL_HOST_DIR}/" >"${RSYNC_LOG}" 2>&1 || {
-    echo "Warning: rsync failed, falling back to scp" >&2
-    echo "--- rsync stderr/stdout (first 200 lines) ---" >&2
-    head -n 200 "${RSYNC_LOG}" >&2 || true
+# Prefer tar-over-ssh streaming (doesn't require rsync on remote). Fallback to scp.
+echo "Attempting tar-over-ssh transfer from remote..."
+if sshpass -e ssh "${SSH_OPTS[@]}" "${SSH_USER}@${HOST}" "test -d $(printf %q "$artifact_dir")" >/dev/null 2>&1; then
+  TAR_LOG="${LOCAL_HOST_DIR}/tar_$(date +%s).log"
+  # Stream tar from remote into local tar extract
+  if ! sshpass -e ssh "${SSH_OPTS[@]}" "${SSH_USER}@${HOST}" "tar -C $(printf %q "$artifact_dir") -cf - ." 2>"${TAR_LOG}" | tar -C "${LOCAL_HOST_DIR}/" -xf -; then
+    echo "Warning: tar-over-ssh failed, showing log head and falling back to scp" >&2
+    echo "--- tar-over-ssh stderr (first 200 lines) ---" >&2
+    head -n 200 "${TAR_LOG}" >&2 || true
     sshpass -e scp -r -P "$PORT" -o PreferredAuthentications=password -o PubkeyAuthentication=no \
       ${ACCEPT_NEW_HOSTKEY:+-o StrictHostKeyChecking=accept-new} \
       "${SSH_USER}@${HOST}:${artifact_dir}" "${LOCAL_HOST_DIR}/" >/dev/null
-  }
+  fi
 else
+  echo "Warning: remote artifact dir does not exist or is not accessible; falling back to scp" >&2
   sshpass -e scp -r -P "$PORT" -o PreferredAuthentications=password -o PubkeyAuthentication=no \
     ${ACCEPT_NEW_HOSTKEY:+-o StrictHostKeyChecking=accept-new} \
     "${SSH_USER}@${HOST}:${artifact_dir}" "${LOCAL_HOST_DIR}/" >/dev/null
