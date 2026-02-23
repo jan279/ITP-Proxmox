@@ -446,7 +446,7 @@ if command -v rsync >/dev/null 2>&1; then
 
   RSYNC_LOG="${LOCAL_HOST_DIR}/rsync_$(date +%s).log"
   # Run rsync prefixed with sshpass so ssh child gets the password
-  sshpass -e rsync -a -e "ssh $RSYNC_SSH_OPTS" "${SSH_USER}@${HOST}:${artifact_dir}/" "${LOCAL_HOST_DIR}/${REMOTE_BASENAME}/" >"${RSYNC_LOG}" 2>&1 || {
+  sshpass -e rsync -a -e "ssh $RSYNC_SSH_OPTS" "${SSH_USER}@${HOST}:${artifact_dir}/" "${LOCAL_HOST_DIR}/" >"${RSYNC_LOG}" 2>&1 || {
     echo "Warning: rsync failed, falling back to scp" >&2
     echo "--- rsync stderr/stdout (first 200 lines) ---" >&2
     head -n 200 "${RSYNC_LOG}" >&2 || true
@@ -465,15 +465,15 @@ if [[ "$KEEP_ARTIFACT" != "1" ]]; then
 fi
 
 echo "Saved:"
-echo "  ${LOCAL_HOST_DIR}/${REMOTE_BASENAME}/"
+echo "  ${LOCAL_HOST_DIR}/"
 echo "Look:"
-echo "  ${LOCAL_HOST_DIR}/${REMOTE_BASENAME}/files/ (bookstack*.md)"
-echo "  ${LOCAL_HOST_DIR}/${REMOTE_BASENAME}/logs/  (logs)"
+echo "  ${LOCAL_HOST_DIR}/files/ (bookstack.md)"
+echo "  ${LOCAL_HOST_DIR}/logs/  (logs)"
 
 # Entferne am Ende angehängte 6-stellige Zeitbestandteile von Ordnernamen (z.B. _134620)
 # Suche rekursiv im gerade heruntergeladenen Artefakt und benenne Verzeichnisse um.
 if [[ -d "${LOCAL_HOST_DIR}/${REMOTE_BASENAME}" ]]; then
-  find "${LOCAL_HOST_DIR}/${REMOTE_BASENAME}" -depth -type d -name '*_[0-9][0-9][0-9][0-9][0-9][0-9]' -print0 \
+  find "${LOCAL_HOST_DIR}" -depth -type d -name '*_[0-9][0-9][0-9][0-9][0-9][0-9]' -print0 \
     | while IFS= read -r -d '' dir; do
         base="$(basename "$dir")"
         newbase="${base%_[0-9][0-9][0-9][0-9][0-9][0-9]}"
@@ -486,4 +486,22 @@ if [[ -d "${LOCAL_HOST_DIR}/${REMOTE_BASENAME}" ]]; then
           fi
         fi
     done
+fi
+
+# Falls export-*-Ordner unter files/ existiert, hole bookstack.md in files/ und entferne leere Ordner
+if [[ -d "${LOCAL_HOST_DIR}/files" ]]; then
+  for d in "${LOCAL_HOST_DIR}/files"/*; do
+    [[ -d "$d" ]] || continue
+    name="$(basename "$d")"
+    # case-insensitive check ob Name mit export- beginnt
+    if [[ "${name,,}" == export-* ]]; then
+      if [[ -f "$d/bookstack.md" ]]; then
+        mv -n -- "$d/bookstack.md" "${LOCAL_HOST_DIR}/files/bookstack.md" && echo "Moved bookstack.md -> ${LOCAL_HOST_DIR}/files/bookstack.md"
+      fi
+      # Wenn Ordner jetzt leer ist, entferne ihn
+      if [[ -z "$(ls -A "$d" 2>/dev/null)" ]]; then
+        rmdir -- "$d" && echo "Removed empty folder $d"
+      fi
+    fi
+  done
 fi
